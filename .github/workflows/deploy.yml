@@ -1,0 +1,50 @@
+name: Deploy EC2 stack # Workflow name shown in the Actions tab
+
+on: # Events that start the workflow
+  push: # Run when code is pushed
+    branches: [main] # Only pushes to main
+    paths: # Only when one of these files changes
+      - "templates/**" # Any file in the templates folder
+      - ".github/workflows/deploy.yml" # This workflow file
+  workflow_dispatch: # Allow running it manually from the Actions tab
+    inputs: # Options shown when running manually
+      instance_type: # Input name
+        description: EC2 instance type # Label shown in the UI
+        default: t2.micro # Pre-selected value
+        type: choice # Shown as a dropdown
+        options: [t2.micro, t2.small, t2.medium, t3.micro, t3.small, t3.medium] # Dropdown values
+
+env: # Variables available to every step
+  AWS_REGION: us-east-1 # AWS region to deploy in (change if your lab uses another)
+  STACK_NAME: ec2-lab-stack # Name of the CloudFormation stack
+  TEMPLATE: templates/ec2-instance.yaml # Path to the CloudFormation template
+
+jobs: # Jobs in this workflow
+  deploy: # Job name
+    runs-on: ubuntu-latest # Run on a GitHub-hosted Ubuntu machine
+    steps: # Steps run in order
+      - uses: actions/checkout@v4 # Download the repo onto the runner
+
+      - name: Configure AWS credentials # Step name shown in the log
+        uses: aws-actions/configure-aws-credentials@v4 # Official AWS action that sets up CLI credentials
+        with: # Inputs for the action
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} # Lab access key from repo secrets
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # Lab secret key from repo secrets
+          aws-region: ${{ env.AWS_REGION }} # Region from the env block
+
+      - name: Validate template # Step name shown in the log
+        run: aws cloudformation validate-template --template-body file://${{ env.TEMPLATE }} # Check the template for syntax errors before deploying
+
+      - name: Deploy stack # Step name shown in the log
+        run: | # Multi-line shell script
+          args=(
+            --stack-name "$STACK_NAME"       # Stack to create or update
+            --template-file "$TEMPLATE"      # Template file to deploy
+            --parameter-overrides InstanceType="${{ inputs.instance_type || 't2.micro' }}" # Instance size from manual input, t2.micro on push
+            --no-fail-on-empty-changeset     # Don't fail if nothing changed
+          )
+          aws cloudformation deploy "${args[@]}" # Create the stack, or update it if it exists
+
+      - name: Show outputs # Step name shown in the log
+        run: | # Multi-line shell script
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs" --output table | tee -a "$GITHUB_STEP_SUMMARY" # Print stack outputs to the log and the run summary page
